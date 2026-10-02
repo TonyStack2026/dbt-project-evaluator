@@ -1,0 +1,4 @@
+order_id,customer_id,order_total
+1,100,10.50
+2,101,20.25
+3,100,5.00

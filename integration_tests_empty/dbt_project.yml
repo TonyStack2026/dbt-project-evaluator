@@ -1,0 +1,23 @@
+name: 'dbt_project_evaluator_integration_tests_empty'
+version: '1.0.0'
+config-version: 2
+
+profile: 'integration_tests'
+
+# This project intentionally contains no models, seeds, sources or exposures:
+# it is the "what happens when there is nothing to evaluate" case. The suite
+# asserts the package still builds and reports zero findings instead of
+# erroring or inventing rows.
+model-paths: ["models"]
+test-paths: ["tests"]
+
+dispatch:
+  - macro_namespace: dbt
+    search_order: ['dbt_project_evaluator', 'dbt']
+
+tests:
+  dbt_project_evaluator:
+    +enabled: false
+
+vars:
+  insert_batch_size: 100

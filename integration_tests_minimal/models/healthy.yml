@@ -1,0 +1,59 @@
+version: 2
+
+models:
+  - name: base_mc_orders
+    description: healthy fixture layer 1 - documented, tested, one step from the seed
+    columns:
+      - name: order_id
+        description: fixture order key
+        data_tests:
+          - unique
+          - not_null
+      - name: customer_id
+        description: fixture customer key
+      - name: order_total
+        description: fixture amount
+
+  - name: stg_mc_orders
+    description: healthy fixture layer 2 - documented and tested
+    columns:
+      - name: order_id
+        description: fixture order key
+        data_tests:
+          - unique
+          - not_null
+
+  - name: int_mc_orders_agg
+    description: healthy fixture layer 3 - documented and tested
+    columns:
+      - name: customer_id
+        description: fixture customer key
+        data_tests:
+          - unique
+          - not_null
+
+  - name: fct_mc_orders
+    description: healthy fixture mart - the control the rules must not report
+    columns:
+      - name: customer_id
+        description: fixture customer key
+        data_tests:
+          - unique
+          - not_null
+
+  - name: orders_report
+    description: >
+      documented on purpose, so that the only rule it triggers is the naming
+      convention one (no accepted marts prefix)
+
+  - name: stg_mc_orphan
+    description: documented on purpose so it only triggers fct_root_models
+
+  - name: stg_mc_direct_from_source
+    description: documented on purpose so it only triggers fct_direct_join_to_source
+
+  - name: stg_mc_exempted_direct_source
+    description: documented on purpose; exempted through the exceptions seed
+
+  - name: stg_mc_hard_coded
+    description: documented on purpose so it only triggers fct_hard_coded_references

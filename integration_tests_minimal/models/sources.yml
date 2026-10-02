@@ -1,0 +1,11 @@
+version: 2
+
+sources:
+  - name: mc_source
+    description: fixture source used only to build the graph; no model materializes it
+    schema: fixture_schema
+    tables:
+      - name: raw_orders
+        description: read by the two direct-join-to-source fixtures
+      - name: unused_orders
+        # deliberately not referenced anywhere: fct_unused_sources must report it

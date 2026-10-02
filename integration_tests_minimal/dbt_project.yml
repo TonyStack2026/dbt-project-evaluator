@@ -1,0 +1,46 @@
+name: 'dbt_project_evaluator_integration_tests_minimal'
+version: '1.0.0'
+config-version: 2
+
+profile: 'integration_tests'
+
+model-paths: ["models"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+dispatch:
+  - macro_namespace: dbt
+    search_order: ['dbt_project_evaluator', 'dbt']
+
+models:
+  dbt_project_evaluator_integration_tests_minimal:
+    # Fixture models exist to describe a DAG. Most of them are ephemeral, so no
+    # fake data is executed; the healthy chain is a real view because rules about
+    # tests, docs and materialization need real objects on the warehouse.
+    +materialized: ephemeral
+    marts:
+      healthy:
+        +materialized: view
+
+# The package ships an exceptions seed. This project disables it and provides
+# its own (seeds/dbt_project_evaluator_exceptions.csv), which is what drives the
+# exemption path in dbt_project_evaluator.filter_exceptions().
+seeds:
+  dbt_project_evaluator:
+    dbt_project_evaluator_exceptions:
+      +enabled: false
+
+tests:
+  # the package's own tests target a different fixture project; this suite
+  # asserts expectations through tests/generic and models/expectations.yml
+  dbt_project_evaluator:
+    +enabled: false
+
+vars:
+  insert_batch_size: 100

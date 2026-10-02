@@ -1,0 +1,14 @@
+version: 2
+
+seeds:
+  - name: mc_raw_orders
+    description: >
+      The fixture's raw input, materialized as a real table so that the healthy
+      chain executes real SQL on the target warehouse.
+    columns:
+      - name: order_id
+        description: one value per fixture order
+      - name: customer_id
+        description: fixture customer key
+      - name: order_total
+        description: fixture amount

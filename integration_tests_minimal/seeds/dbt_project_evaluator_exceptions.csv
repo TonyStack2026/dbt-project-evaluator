@@ -1,0 +1,2 @@
+fct_name,column_name,id_to_exclude,comment
+fct_direct_join_to_source,child,stg_mc_exempted_direct_source,deliberately exempt to prove the exceptions seed is applied
