@@ -110,7 +110,10 @@ jobs:
 
         runs-on: ubuntu-latest
 
-        timeout-minutes: 45
+        # measured on one run of the 155-node suite: ~47 minutes wall, because the
+        # dag rule models are table materializations that each take ~10 minutes
+        # (fct_model_fanout 699.94s, fct_multiple_sources_joined 668.33s)
+        timeout-minutes: 90
 
         strategy:
             fail-fast: false
