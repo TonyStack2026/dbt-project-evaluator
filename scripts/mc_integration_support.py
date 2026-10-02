@@ -13,6 +13,7 @@ Credentials are read from the environment by the caller (the adapter's
 import json
 import os
 import sys
+import time
 
 from odps import ODPS
 
@@ -118,9 +119,16 @@ def cleanup(schemas):
         except Exception as exc:
             print("CLEANUP: FAIL cannot drop %s: %s: %s"
                   % (schema, type(exc).__name__, exc))
-    leaked = [s for s in schemas if odps_client.exist_schema(s)]
-    if leaked:
-        print("CLEANUP: FAIL schemas still present: %s" % leaked)
+    # 删除与元数据可见之间可能有短暂滞后（实测：drop 已成功，立刻回读仍报存在），
+    # 所以按"最多等 60 秒"复查；仍然存在的才是真泄漏。
+    pending = list(schemas)
+    for _ in range(12):
+        pending = [s for s in pending if odps_client.exist_schema(s)]
+        if not pending:
+            break
+        time.sleep(5)
+    if pending:
+        print("CLEANUP: FAIL schemas still present: %s" % pending)
         return 1
     print("CLEANUP: OK dropped %d schema(s) owned by this run: %s"
           % (len(schemas), ", ".join(schemas) if schemas else "none"))

@@ -20,6 +20,9 @@
 #   MC_KEEP_SCHEMAS optional set 1 to keep this run's schemas for inspection
 #   DPE_ARTIFACT_DIR optional directory to copy each run_results.json into
 #   DPE_DBT_EXTRA optional extra dbt flags, e.g. "--select tag:my_subset"
+#   DPE_DEPS_ATTEMPTS optional `dbt deps` retries (default 5)
+#   DPE_GIT_SSH   optional set 1 to reach git packages over ssh when the HTTPS
+#                 clone path is blocked (needs a GitHub key on the account)
 # Credentials are read from the environment by the adapter's ``auth_type: chain``
 # (ODPS_ACCESS_ID / ODPS_ACCESS_KEY, or ALIBABA_CLOUD_ACCESS_KEY_ID / _SECRET);
 # the generated profile holds no secret material and lives in a temp dir.
@@ -75,6 +78,13 @@ integration_tests:
       threads: 4
 YAML
 export DBT_PROFILES_DIR="$PROFILES_DIR"
+if [ "${DPE_GIT_SSH:-0}" = "1" ]; then
+    export GIT_CONFIG_COUNT=1
+    export GIT_CONFIG_KEY_0='url.git@github.com:.insteadOf'
+    export GIT_CONFIG_VALUE_0='https://github.com/'
+    echo "GIT: https://github.com/ rewritten to ssh for this run (DPE_GIT_SSH=1)"
+fi
+
 cleanup_profiles() { rm -rf "$PROFILES_DIR"; }
 trap cleanup_profiles EXIT
 
@@ -110,11 +120,15 @@ for suite in "${SUITES[@]}"; do
     fi
     echo ""
     echo "=== SUITE $suite ==="
-    # `dbt deps` clones git packages over TLS and that transport flakes on
-    # shared runners, so it is retried before the suite is called a failure.
-    # A suite that never got its packages reports NOT-RUN; it is never a pass.
+    # `dbt deps` clones git packages over TLS and that transport flakes - or is
+    # blocked outright - on shared runners and dev boxes, so it is retried before
+    # the suite is called a failure. A suite that never got its packages reports
+    # NOT-RUN; it is never a pass.
+    # DPE_GIT_SSH=1 rewrites https://github.com/ to the ssh transport for this
+    # run only (env-scoped, no repository or global git config is touched), which
+    # is the fallback when the 443 clone path is blocked but ssh works.
     deps_rc=1
-    for attempt in 1 2 3; do
+    for attempt in $(seq 1 "${DPE_DEPS_ATTEMPTS:-5}"); do
         (cd "$project_dir" && timeout 900 "$DBT_BIN" deps --quiet) 2>&1 \
             | sed -e "s/^/  deps attempt $attempt: /"
         deps_rc=${PIPESTATUS[0]}
