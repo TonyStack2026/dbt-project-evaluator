@@ -13,7 +13,13 @@ seeds:
   - name: test_fct_documentation_coverage
     config:
       column_types:
-        staging_documentation_coverage_pct: &float "{{ 'float' if target.type not in ['athena', 'databricks', 'duckdb','trino', 'spark'] else 'decimal(10,2)' }}"
+        # Same reason as seeds/tests/tests_seeds.yml: MaxCompute's FLOAT is 4-byte, so a value the
+        # rule computes as DOUBLE (e.g. 33.33) is never equal to the same number stored as FLOAT -
+        # measured on the server: an EXCEPT between cast(33.33 as float) and cast(33.33 as double)
+        # returns 1 row, and 0 rows once both sides are double. This fixture passes today only
+        # because its four values (20.00 / 0.00 / 0.00 / 75.00) happen to be exact in float32;
+        # any percentage that is not (22.22, 33.33, ...) would fail for no functional reason.
+        staging_documentation_coverage_pct: &float "{{ 'double' if target.type in ['athena', 'trino', 'maxcompute'] else ('decimal(10,2)' if target.type in ['databricks', 'duckdb', 'spark'] else 'float') }}"
         intermediate_documentation_coverage_pct: *float
         marts_documentation_coverage_pct: *float
         other_documentation_coverage_pct: *float
