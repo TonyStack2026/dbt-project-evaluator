@@ -101,10 +101,49 @@ jobs:
                   echo "can_run=true" >> "$GITHUB_OUTPUT"
                   echo "credentials and a project are configured: the integration jobs will contact MaxCompute"
 
+    prepare:
+        name: decide which suites to run
+
+        needs: gate
+
+        if: needs.gate.outputs.can_run == 'true'
+
+        runs-on: ubuntu-latest
+
+        outputs:
+            matrix: ${{ steps.pick.outputs.matrix }}
+
+        steps:
+            - name: "Checkout ${{ github.event.repository.name }}"
+              uses: actions/checkout@v4
+
+            # The selection lives in a script rather than inline here so that every rule
+            # (default set, unknown name, whitespace-only input) can be tested without GitHub.
+            - name: Pick the suites
+              id: pick
+              env:
+                  REQUESTED_SUITES: ${{ inputs.suites }}
+              run: |
+                  set -uo pipefail
+                  # word-split on purpose: the input is documented as space separated.
+                  # An array is used instead of unquoted expansion so that a glob in the
+                  # input cannot match file names.
+                  read -r -a requested <<< "${REQUESTED_SUITES:-}"
+                  out="$(./scripts/ci-select-suites.sh "${requested[@]}")"
+                  rc=$?
+                  if [ $rc -ne 0 ]; then
+                      echo "::error::suite selection failed (rc=$rc): see the log above"
+                      exit $rc
+                  fi
+                  printf '%s\n' "$out" >> "$GITHUB_OUTPUT"
+                  echo "matrix will be: $out"
+
     integration:
         name: ${{ matrix.suite }} (live MaxCompute project)
 
-        needs: gate
+        needs:
+            - gate
+            - prepare
 
         if: needs.gate.outputs.can_run == 'true'
 
@@ -117,11 +156,7 @@ jobs:
 
         strategy:
             fail-fast: false
-            matrix:
-                suite:
-                    - integration_tests_minimal
-                    - integration_tests_empty
-                    - integration_tests
+            matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
 
         env:
             MC_PROJECT: ${{ vars.MC_PROJECT }}

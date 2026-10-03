@@ -78,6 +78,22 @@ MaxCompute profile needs `auth_type: chain` so that no key material is ever writ
 repository. MaxCompute therefore runs through `scripts/run-maxcompute-integration-tests.sh`,
 which generates the profile at run time in a temp directory and cleans it up on exit.
 
+## Narrowing a manual run
+
+A *Run workflow* `suites` input is honoured by `scripts/ci-select-suites.sh`:
+
+| input | behaviour |
+| --- | --- |
+| empty | the measured default set: `integration_tests`, `integration_tests_minimal`, `integration_tests_empty` |
+| one or more names (space separated) | exactly those suites |
+| a name that is not a suite of this repository, or contains odd characters | the prepare step fails, nothing runs |
+| whitespace only | fails as a usage error — it must not silently mean "run everything" (~47 min of warehouse time) |
+| a suite that exists but has not been measured on MaxCompute yet | allowed only when named explicitly, with a note in the log |
+
+The default list is deliberately an explicit one rather than "every `integration_tests*`
+directory", so adding a project cannot silently put an unmeasured suite into CI. The selection is
+a script instead of inline workflow YAML so those rules are testable without GitHub.
+
 ## Version combination
 
 The suites were written against `dbt-core 1.11.2` with `dbt-maxcompute` and a three-tier
