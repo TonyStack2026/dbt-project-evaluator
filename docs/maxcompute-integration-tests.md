@@ -71,12 +71,19 @@ labelled `integration: NOT RUN` in the run summary and a maintainer runs the sam
 
 ## Why not the tox targets
 
-`tox.ini` / `run_tox_tests.sh` drive the adapters whose outputs can be produced by
-`dbt build -t <adapter>` against the committed `integration_tests/profiles.yml`. That file
-resolves its settings with `{{ env_var(...) }}`, which dbt-core 1.11+ no longer renders, and a
-MaxCompute profile needs `auth_type: chain` so that no key material is ever written into the
-repository. MaxCompute therefore runs through `scripts/run-maxcompute-integration-tests.sh`,
-which generates the profile at run time in a temp directory and cleans it up on exit.
+`tox.ini` / `run_tox_tests.sh` drive the adapters whose suites can run against the committed
+`integration_tests/profiles.yml`. MaxCompute runs through
+`scripts/run-maxcompute-integration-tests.sh` instead, which writes the profile into a temp
+directory at run time and deletes it on exit. Why that choice, stated accurately:
+
+- `auth_type: chain` keeps credentials in the environment, and generating the profile means no
+  endpoint/project/secret combination ever has to be committed or hand-edited;
+- a run can own its own `MC_SCHEMA_MC_RUN_ID` schema, which is what makes concurrent runs safe;
+- **not** because Jinja in `profiles.yml` is broken. An earlier draft of this page claimed
+  dbt-core 1.11 stopped rendering it; that is wrong and was measured on 1.11.2: an undefined
+  `{{ env_var('…') }}` fails the parse with `Env var required but not provided`, and a defined one
+  resolves (`dbt debug` reports `project: probe_project`). Proof: the two discriminators in
+  `scripts/probe-profiles-jinja.sh` in this repository.
 
 ## Narrowing a manual run
 
@@ -109,7 +116,8 @@ installs the pinned combination above.
   declared column type (`cast(<n> as {{ dbt.type_int() }})` / `dbt.type_float()`) in
   `macros/unpack/get_node_values.sql` and `macros/unpack/get_column_values.sql` - the same approach
   upstream took in #602, so this fork does not diverge on it.
-- dbt-core 1.11 stopped rendering Jinja in `profiles.yml`, which is why the profile is
-  generated at run time instead of being committed with `env_var()` calls.
+- The profile is generated at run time (temp dir, `auth_type: chain`) so nothing about the
+  warehouse or its credentials is committed; `env_var()` in `profiles.yml` does still work on
+  dbt-core 1.11.2, measured - so this is a design choice, not a workaround.
 - The exceptions seed is matched with `not like`, and `_` is a single-character wildcard in
   `LIKE`. Fixture names that rely on exemptions are therefore distinct enough not to collide.

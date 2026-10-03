@@ -60,9 +60,11 @@ MC_RUN_ID="${MC_RUN_ID:-$(date -u +%Y%m%d%H%M%S)}"
 RUN_SCHEMA="${MC_SCHEMA}_${MC_RUN_ID}"
 
 # Both fixture projects use the profile name "integration_tests", so one
-# generated profile covers all of them. dbt-core >= 1.11 does not render Jinja
-# in profiles.yml, which is why this file is generated instead of checked in
-# with env_var() calls.
+# generated profile covers all of them. It is generated (and deleted on exit) so that
+# nothing about the project, endpoint or credentials has to be committed or hand-edited;
+# env_var() in profiles.yml does work on dbt-core 1.11.2 - verified here with two
+# discriminators (undefined var fails the parse, defined var resolves) - so this is a
+# credentials-isolation choice, not a workaround for a Jinja regression.
 PROFILES_DIR="$(mktemp -d)"
 umask 077
 cat > "$PROFILES_DIR/profiles.yml" <<YAML
