@@ -84,7 +84,7 @@ A *Run workflow* `suites` input is honoured by `scripts/ci-select-suites.sh`:
 
 | input | behaviour |
 | --- | --- |
-| empty | the measured default set: `integration_tests`, `integration_tests_minimal`, `integration_tests_empty` |
+| empty | the measured default set: `integration_tests`, `integration_tests_2`, `integration_tests_minimal`, `integration_tests_empty` |
 | one or more names (space separated) | exactly those suites |
 | a name that is not a suite of this repository, or contains odd characters | the prepare step fails, nothing runs |
 | whitespace only | fails as a usage error — it must not silently mean "run everything" (~47 min of warehouse time) |

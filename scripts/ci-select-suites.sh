@@ -23,7 +23,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # have been measured against a live MaxCompute project - discovery alone would silently add a
 # project nobody has run there yet. Anything with a dbt_project.yml can still be requested
 # explicitly, which is how a new suite gets measured before it joins the default.
-MEASURED_SUITES=("integration_tests" "integration_tests_minimal" "integration_tests_empty")
+MEASURED_SUITES=("integration_tests" "integration_tests_2" "integration_tests_minimal" "integration_tests_empty")
 
 discover() {
     local dir
