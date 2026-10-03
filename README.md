@@ -26,7 +26,7 @@ Currently, the following adapters are supported:
 - AWS Athena (tested manually)
 - Greenplum (tested manually)
 - ClickHouse (tested manually)
-- MaxCompute ([integration suites](docs/maxcompute-integration-tests.md))
+- MaxCompute (tested manually)
 
 ## Using This Package
 
@@ -42,7 +42,7 @@ packages:
   
 Check [dbt Hub](https://hub.getdbt.com/dbt-labs/dbt_project_evaluator/latest/) for the latest installation instructions, or [read the docs](https://docs.getdbt.com/docs/package-management) for more information on installing packages.
 
-### Additional setup for Databricks/Spark/DuckDB/Redshift/ClickHouse/MaxCompute
+### Additional setup for Databricks/Spark/DuckDB/Redshift/ClickHouse
 
 In your `dbt_project.yml`, add the following config:
 
