@@ -102,10 +102,13 @@ installs the pinned combination above.
 
 ## Notes for anyone changing the package
 
-- MaxCompute has no implicit `DOUBLE -> FLOAT` conversion, and the package inserts values it
-  read from the manifest into columns typed with `dbt.type_float()`. The `maxcompute__type_float()`
-  shim in `macros/cross_db_shim/maxcompute_shims.sql` declares those columns `double` instead;
-  without it `stg_nodes` fails and every rule downstream of it is skipped.
+- MaxCompute refuses the implicit `DOUBLE -> FLOAT` narrowing. The graph staging models declare
+  `sql_complexity` with `dbt.type_float()` and then insert values computed from the manifest, so the
+  insert is rejected (`ODPS-0130071 … incompatible type DOUBLE with destination column sql_complexity,
+  which has type FLOAT`) and every rule downstream is skipped. The fix casts the emitted values to the
+  declared column type (`cast(<n> as {{ dbt.type_int() }})` / `dbt.type_float()`) in
+  `macros/unpack/get_node_values.sql` and `macros/unpack/get_column_values.sql` - the same approach
+  upstream took in #602, so this fork does not diverge on it.
 - dbt-core 1.11 stopped rendering Jinja in `profiles.yml`, which is why the profile is
   generated at run time instead of being committed with `env_var()` calls.
 - The exceptions seed is matched with `not like`, and `_` is a single-character wildcard in

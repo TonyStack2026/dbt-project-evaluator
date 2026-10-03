@@ -26,7 +26,7 @@ Currently, the following adapters are supported:
 - AWS Athena (tested manually)
 - Greenplum (tested manually)
 - ClickHouse (tested manually)
-- MaxCompute (tested manually)
+- MaxCompute ([integration suites](docs/maxcompute-integration-tests.md))
 
 ## Using This Package
 
@@ -42,7 +42,7 @@ packages:
   
 Check [dbt Hub](https://hub.getdbt.com/dbt-labs/dbt_project_evaluator/latest/) for the latest installation instructions, or [read the docs](https://docs.getdbt.com/docs/package-management) for more information on installing packages.
 
-### Additional setup for Databricks/Spark/DuckDB/Redshift/ClickHouse
+### Additional setup for Databricks/Spark/DuckDB/Redshift/ClickHouse/MaxCompute
 
 In your `dbt_project.yml`, add the following config:
 
@@ -54,7 +54,7 @@ dispatch:
     search_order: ['dbt_project_evaluator', 'dbt']
 ```
 
-This is required because the project currently overrides a small number of dbt core macros in order to ensure the project can run across the listed adapters. The overridden macros are in the [cross_db_shim directory](macros/cross_db_shim/).
+This is required because the project currently overrides a small number of dbt core macros in order to ensure the project can run across the listed adapters. The overridden macros are in the [cross_db_shim directory](macros/cross_db_shim/). MaxCompute is in this list because the graph staging models `union` their computed columns together, and one of those macros (`type_string`) has to render MaxCompute's `string` type; the numeric values those models insert are cast to the destination column type, which MaxCompute requires because it will not implicitly narrow `DOUBLE` into `FLOAT`.
   
 ## Documentation
 
