@@ -15,10 +15,13 @@ import os
 import sys
 import time
 
-from odps import ODPS
-
 
 def _client():
+    # Imported here rather than at module scope: `summary` reads a file that dbt
+    # already wrote, so it must stay runnable (and testable) on a machine that has
+    # no pyodps installed - which is the case on a fork PR's runner.
+    from odps import ODPS
+
     return ODPS(
         os.environ["ODPS_ACCESS_ID"],
         os.environ["ODPS_ACCESS_KEY"],
@@ -66,21 +69,67 @@ def preflight(schema):
     return 0
 
 
+# Statuses that mean "this node reached the warehouse and produced an outcome".
+# dbt-core 1.11 writes ``success`` for a model, ``pass`` for a test, ``warn`` for an
+# executed node that warned, ``no-op`` (with the hyphen - measured on the real
+# run_results.json of a live 155-node run, where one exposure reported it) for a node it
+# decided not to run, ``skipped`` for a node whose dependencies failed, and ``error`` /
+# ``fail`` for the two ways a node says no. Compared after normalisation, because the
+# spellings carry hyphens and spaces.
+EXECUTED_OK = frozenset(("success", "pass", "warn"))
+EXECUTED_BAD = frozenset(("error", "fail", "runtime_error", "partial_success"))
+DID_NOT_EXECUTE = frozenset(("skipped", "no_op"))
+
+
+def normalise(status):
+    return str(status).strip().lower().replace("-", "_").replace(" ", "_")
+
+# A suite is only evidence if at least this many nodes actually ran. It exists to
+# catch "dbt parsed the project and did nothing", not to assert a node count: the
+# measured suites run 50-155 nodes, so 1 is a deliberately weak floor. Every node
+# a suite skips has to be visible in the line, or a green gate means nothing.
+MIN_EXECUTED = 1
+
+
 def summary(path, label):
+    """Turn one dbt run_results.json into a gate decision.
+
+    Three shapes are failures in their own right, because each of them used to be
+    reported as a pass: no results at all, every result skipped, and any node that
+    errored or failed. The exit code, not the prose, is what CI judges.
+    """
     if not os.path.exists(path):
         print("SUITE %s: NO-RESULTS (dbt did not write run_results.json)" % label)
         return 1
-    with open(path) as handle:
-        data = json.load(handle)
+    try:
+        with open(path) as handle:
+            data = json.load(handle)
+    except ValueError as exc:
+        print("SUITE %s: BAD-RESULTS (run_results.json is not JSON: %s)" % (label, exc))
+        return 1
+    results = data.get("results")
+    if results is None:
+        print("SUITE %s: NO-RESULTS (run_results.json has no 'results' key)" % label)
+        return 1
+    if not isinstance(results, list):
+        print("SUITE %s: BAD-RESULTS ('results' is %s, expected a list)"
+              % (label, type(results).__name__))
+        return 1
+
     counts = {}
     failures = []
-    for result in data.get("results", []):
-        status = str(result.get("status"))
+    for result in results:
+        status = normalise(result.get("status"))
         counts[status] = counts.get(status, 0) + 1
-        if status in ("error", "fail", "runtime error"):
+        if status in EXECUTED_BAD or status not in EXECUTED_OK | DID_NOT_EXECUTE:
             failures.append((result.get("unique_id"),
                              (result.get("message") or "").splitlines()[:1]))
-    line = "SUITE %s: TOTAL=%d" % (label, sum(counts.values()))
+
+    executed = sum(counts.get(status, 0) for status in EXECUTED_OK | EXECUTED_BAD)
+    skipped = sum(counts.get(status, 0) for status in DID_NOT_EXECUTE)
+    total = sum(counts.values())
+
+    line = "SUITE %s: TOTAL=%d EXECUTED=%d SKIPPED=%d" % (label, total, executed, skipped)
     for status, count in sorted(counts.items()):
         line += " %s=%d" % (status.replace(" ", "_").upper(), count)
     print(line)
@@ -88,7 +137,22 @@ def summary(path, label):
         print("  NOT-PASS %s: %s" % (unique_id, message))
     if len(failures) > 20:
         print("  NOT-PASS ... %d more" % (len(failures) - 20))
-    return 1 if failures else 0
+
+    if total == 0:
+        print("SUITE %s: GATE=FAIL no node produced a result (an empty suite is not a pass)"
+              % label)
+        return 1
+    if failures:
+        print("SUITE %s: GATE=FAIL %d node(s) errored, failed or reported an unknown status"
+              % (label, len(failures)))
+        return 1
+    if executed < MIN_EXECUTED:
+        print("SUITE %s: GATE=FAIL every node was skipped/no-op (%d of %d), so no rule was "
+              "actually evaluated" % (label, skipped, total))
+        return 1
+    print("SUITE %s: GATE=PASS %d node(s) executed, %d skipped, 0 failed"
+          % (label, executed, skipped))
+    return 0
 
 
 def _drop_relations(odps_client, schema):

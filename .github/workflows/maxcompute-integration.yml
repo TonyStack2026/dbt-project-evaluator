@@ -43,6 +43,36 @@ env:
     DBT_CORE_VERSION: "1.11.2"
 
 jobs:
+    gate-selftest:
+        name: gate self-test (no warehouse needed)
+
+        # Runs before, and independently of, the credential gate: the point of these
+        # checks is that the gate cannot report green for a run that evaluated nothing,
+        # and that has to be visible even when no MaxCompute project is configured.
+        # Nothing here contacts a warehouse, reads a secret, or needs pyodps.
+
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: "Checkout ${{ github.event.repository.name }}"
+              uses: actions/checkout@v4
+
+            - name: "Set up Python ${{ env.PYTHON_VERSION }}"
+              uses: actions/setup-python@v5
+              with:
+                  python-version: ${{ env.PYTHON_VERSION }}
+
+            - name: "Run the gate self-test"
+              run: |
+                  set -o pipefail
+                  mkdir -p "$RUNNER_TEMP/artifacts"
+                  ./scripts/test-mc-integration-gate.sh 2>&1 \
+                      | tee "$RUNNER_TEMP/artifacts/gate-selftest.log"
+                  echo '```' >> "$GITHUB_STEP_SUMMARY"
+                  grep -E "^(  ok|  FAIL|INTEGRATION GATE SELF-TEST|SCHEMA-TEST|status:)" \
+                      "$RUNNER_TEMP/artifacts/gate-selftest.log" >> "$GITHUB_STEP_SUMMARY" || true
+                  echo '```' >> "$GITHUB_STEP_SUMMARY"
+
     gate:
         name: gate (are MaxCompute credentials available?)
 
@@ -161,8 +191,21 @@ jobs:
         env:
             MC_PROJECT: ${{ vars.MC_PROJECT }}
             MC_ENDPOINT: ${{ vars.MC_ENDPOINT }}
-            # one schema prefix per workflow run, dropped again by the entrypoint
-            MC_SCHEMA: dpe_ci_${{ github.run_number }}
+            # One schema per (suite, run, attempt). The entrypoint composes these two into
+            # MC_SCHEMA_MC_RUN_ID and owns that schema for the job's lifetime, so both
+            # fields carry a difference that is real: the suite name separates the matrix
+            # jobs inside one run, and run_id + run_attempt separate two runs of the same
+            # suite, including a re-run of the same workflow.
+            #
+            # This used to be `MC_SCHEMA: dpe_ci_${{ github.run_number }}` with no
+            # MC_RUN_ID at all, which left the whole difference between two jobs in the
+            # UTC second the entrypoint appends by default. Two suites starting in the same
+            # second got the same schema and then created and dropped each other's
+            # relations, so a red run could mean "the other job deleted my tables" rather
+            # than anything about the rules under test. `github.run_number` is also shared
+            # by every job of a run, and a re-run keeps it, so it cannot be the token.
+            MC_SCHEMA: dpe_ci_${{ matrix.suite }}
+            MC_RUN_ID: ${{ github.run_id }}a${{ github.run_attempt }}
             ODPS_ACCESS_ID: ${{ secrets.MAXCOMPUTE_ACCESS_ID }}
             ODPS_ACCESS_KEY: ${{ secrets.MAXCOMPUTE_ACCESS_KEY }}
         steps:

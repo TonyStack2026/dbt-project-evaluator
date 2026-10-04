@@ -27,8 +27,16 @@
 # (ODPS_ACCESS_ID / ODPS_ACCESS_KEY, or ALIBABA_CLOUD_ACCESS_KEY_ID / _SECRET);
 # the generated profile holds no secret material and lives in a temp dir.
 #
-# Exit codes: 0 every suite passed | 1 a node failed or errored | 2 blocked, no
-# SQL reached a project (missing env/credentials, unreachable or two-tier project).
+# A suite counts as passed only if run_results.json exists, contains at least one
+# executed node, has no errored/failed/unknown-status node, and dbt itself exited 0.
+# An empty result list, an all-skipped suite and a non-zero dbt exit are failures;
+# they used to be reported as passes, which is the whole reason this entrypoint
+# exists.
+#
+# Exit codes: 0 every suite passed | 1 a node failed or errored, a suite produced no
+# executed result, or dbt exited non-zero | 2 blocked, no SQL reached a project
+# (missing env/credentials, unreachable or two-tier project, or a run schema that is
+# not a single safe identifier).
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -56,8 +64,21 @@ fi
     || die_blocked "no MaxCompute credentials in the environment"
 
 MC_SCHEMA="${MC_SCHEMA:-dbt_project_evaluator_it}"
-MC_RUN_ID="${MC_RUN_ID:-$(date -u +%Y%m%d%H%M%S)}"
+# A run owns its schema. The default token is second-resolution, which is enough for a
+# person typing one command but NOT enough for a CI matrix: two suite jobs that start in
+# the same second would be handed the same schema and would create and drop each other's
+# relations. So a run id is required to carry more than the clock, and the composed name
+# is validated below rather than trusted.
+MC_RUN_ID="${MC_RUN_ID:-$(date -u +%Y%m%d%H%M%S)_$$}"
 RUN_SCHEMA="${MC_SCHEMA}_${MC_RUN_ID}"
+case "$RUN_SCHEMA" in
+    *[!a-zA-Z0-9_]*)
+        die_blocked "run schema '$RUN_SCHEMA' is not a plain identifier (letters, digits, underscore only). Set MC_SCHEMA and MC_RUN_ID so that MC_SCHEMA_MC_RUN_ID is one; a name carrying a separator would collide across suites on servers that fold identifiers."
+        ;;
+esac
+if [ "${#RUN_SCHEMA}" -gt 64 ]; then
+    die_blocked "run schema '$RUN_SCHEMA' is ${#RUN_SCHEMA} characters; MaxCompute caps a schema name at 128 but a name this long is a sign that MC_RUN_ID was built from the wrong fields (keep it under 64)"
+fi
 
 # Both fixture projects use the profile name "integration_tests", so one
 # generated profile covers all of them. It is generated (and deleted on exit) so that
@@ -110,6 +131,7 @@ if [ ${#SUITES[@]} -eq 0 ]; then
 fi
 
 OVERALL=0
+SUITES_WITH_PROJECT=0
 CREATED_SCHEMAS=()
 if [ "$SCHEMA_OWNED_BY_RUN" = "true" ]; then
     CREATED_SCHEMAS=("$RUN_SCHEMA")
@@ -117,11 +139,16 @@ fi
 for suite in "${SUITES[@]}"; do
     project_dir="$REPO_ROOT/$suite"
     if [ ! -f "$project_dir/dbt_project.yml" ]; then
-        echo "SUITE $suite: NOT-PRESENT (skipped, no dbt_project.yml)"
+        # Requested but absent is a broken invocation, not a skipped suite: if it were
+        # allowed to pass quietly, deleting or renaming one suite would take a unit of
+        # coverage with it and leave the gate green.
+        echo "SUITE $suite: NOT-PRESENT (no dbt_project.yml under $project_dir) - counted as a failure"
+        OVERALL=1
         continue
     fi
     echo ""
     echo "=== SUITE $suite ==="
+    SUITES_WITH_PROJECT=$((SUITES_WITH_PROJECT + 1))
     # `dbt deps` clones git packages over TLS and that transport flakes - or is
     # blocked outright - on shared runners and dev boxes, so it is retried before
     # the suite is called a failure. A suite that never got its packages reports
@@ -146,6 +173,13 @@ for suite in "${SUITES[@]}"; do
     (cd "$project_dir" && timeout 3600 "$DBT_BIN" build --target maxcompute --full-refresh \
         ${DPE_DBT_EXTRA:-}); build_rc=$?
     echo "SUITE $suite build: rc=$build_rc"
+    if [ $build_rc -ne 0 ]; then
+        # dbt itself said no (interrupted, a compile error, an aborted run). The run
+        # results file may still describe that as zero failures, so the exit code is
+        # recorded as its own failure here instead of being only printed.
+        echo "SUITE $suite: BUILD-FAILED (dbt exited $build_rc) - counted as a failure even if run_results.json looks clean"
+        OVERALL=1
+    fi
     if [ ! -f "$project_dir/target/run_results.json" ]; then
         echo "SUITE $suite: NOT-RUN (dbt wrote no run_results.json)"
         OVERALL=1
@@ -162,6 +196,13 @@ for suite in "${SUITES[@]}"; do
 done
 
 echo ""
+if [ "${SUITES_WITH_PROJECT:-0}" -eq 0 ]; then
+    # Nothing was asked for and nothing ran. A gate that exits 0 here would report a
+    # pass for a run that evaluated no rule at all.
+    echo "INTEGRATION: FAIL - no suite ran (0 of ${#SUITES[@]} requested had a dbt_project.yml)"
+    OVERALL=1
+fi
+
 if [ "${MC_KEEP_SCHEMAS:-0}" = "1" ]; then
     echo "CLEANUP: SKIPPED (MC_KEEP_SCHEMAS=1), schemas left behind: ${CREATED_SCHEMAS[*]:-none}"
 elif [ ${#CREATED_SCHEMAS[@]} -eq 0 ]; then

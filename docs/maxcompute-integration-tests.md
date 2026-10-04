@@ -34,19 +34,52 @@ material, and is never written into the repository.
 
 Options and extras:
 
-- `MC_RUN_ID` — suffix for this run's schema (default: UTC timestamp). Concurrent runs stay
-  isolated because each one owns `MC_SCHEMA_MC_RUN_ID`.
+- `MC_RUN_ID` — suffix for this run's schema (default: UTC timestamp plus the process id).
+  A run owns `MC_SCHEMA_MC_RUN_ID`, and the composed name has to be one plain identifier
+  (`[A-Za-z0-9_]`, at most 64 characters) or the run stops with `INTEGRATION: BLOCKED`.
+  A second-resolution timestamp alone is **not** enough to isolate concurrent runs, which is
+  why the CI matrix puts the suite name in `MC_SCHEMA` and `run_id` + `run_attempt` in
+  `MC_RUN_ID` instead of relying on the default; see *Isolation* below.
 - `MC_KEEP_SCHEMAS=1` — leave the run's schema in place for inspection.
 - `DPE_ARTIFACT_DIR` — copy each `run_results.json` here.
 - `DPE_DBT_EXTRA` — extra dbt build flags, e.g. `--select tag:my_subset`.
+
+## What makes a suite count as passed
+
+All four conditions, per suite:
+
+1. `dbt build` exited 0;
+2. `target/run_results.json` exists;
+3. it lists at least one node that actually executed (`success` / `pass` / `warn`);
+4. no node errored, failed, or reported a status this file does not know.
+
+So these are **failures**, each of them used to be a pass:
+
+| Shape | Reported as | Why it matters |
+| --- | --- | --- |
+| `run_results.json` with `results: []` | `GATE=FAIL no node produced a result` | a project that parsed and built nothing evaluates no rule |
+| every node `skipped` / `noop` | `GATE=FAIL every node was skipped/no-op` | a suite that skipped itself looks identical to a green one from the exit code alone |
+| `dbt build` exits non-zero with a clean-looking results file | `SUITE <name>: BUILD-FAILED` | an interrupted or aborted run is dbt saying no, whatever it wrote first |
+| a requested suite directory has no `dbt_project.yml` | `SUITE <name>: NOT-PRESENT ... counted as a failure` | renaming or deleting a suite must cost coverage loudly, not quietly |
+| no suite ran at all | `INTEGRATION: FAIL - no suite ran` | the loop finishing is not the same as the loop having work |
+| `MC_SCHEMA_MC_RUN_ID` is not one plain identifier, or is longer than 64 characters | `INTEGRATION: BLOCKED` | a name with a separator is the same name on a server that folds identifiers, so two suites would share a schema |
+
+The line each suite prints carries the counts, so a green run is auditable rather than
+trusted: `SUITE <name>: TOTAL=n EXECUTED=k SKIPPED=s ... GATE=PASS k node(s) executed`.
+
+Because "a gate that cannot go red" is the failure mode this whole entrypoint exists to
+avoid, the rules above are themselves tested: `./scripts/test-mc-integration-gate.sh` runs
+one case per shape against the real scripts, on a machine with no credentials, no warehouse
+and no pyodps, and it also reads the workflow file to check that the schemas a matrix would
+compose are pairwise distinct. It runs in CI as `gate-selftest`, on every pull request.
 
 Exit codes:
 
 | Code | Meaning |
 | --- | --- |
 | 0 | every suite ran against the project and passed |
-| 1 | at least one suite had an error or a failed test |
-| 2 | **blocked**: no credentials, no `MC_PROJECT`/`MC_ENDPOINT`, the project is unreachable, or it is a two-tier project. No SQL ran, so this is not a pass. |
+| 1 | a suite failed, produced no executed result, was requested but absent, or `dbt` exited non-zero |
+| 2 | **blocked**: no credentials, no `MC_PROJECT`/`MC_ENDPOINT`, the project is unreachable, it is a two-tier project, or the run schema is not one safe identifier. No SQL ran, so this is not a pass. |
 
 A blocked run is reported as `INTEGRATION: BLOCKED - <reason>`; a suite whose packages could
 not be installed is reported as `SUITE <name>: NOT-RUN`. Both are distinct from "0 nodes
@@ -55,6 +88,22 @@ failed", which is what a passing run says.
 Cleanup is ownership-based: the entrypoint records whether *this* run created the schema and
 only drops what it created, then re-reads the project to prove nothing survived. A schema that
 already existed is left alone, because another run may be using it.
+
+## Isolation between concurrent runs
+
+Each run owns `MC_SCHEMA_MC_RUN_ID`. In the CI matrix that is composed as
+`dpe_ci_<suite>_<run_id>a<run_attempt>`, so:
+
+- two suites of the same run never share a schema (the suite name is in the prefix);
+- a re-run never reuses the schema of the attempt it replaced (`run_attempt` is in the token);
+- two runs of the same suite never share one (`run_id`).
+
+The earlier shape - `dpe_ci_<run_number>` with no `MC_RUN_ID` - left the only difference
+between two matrix jobs in the UTC second the entrypoint appended, so jobs starting in the
+same second were handed the same schema and would create and drop each other's relations.
+A run that failed for that reason said nothing about the rules under test.
+`tests/gate/schema_uniqueness.py` reads the workflow file and fails if any two simulated
+jobs compose the same name, so the collision cannot come back unnoticed.
 
 ## Two repository settings the workflow needs
 
