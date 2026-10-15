@@ -102,8 +102,13 @@ build_repo() {
     cp "$GATE_SCRIPT" "$REAL_SUPPORT" "$repo/scripts/"
     cp "$FAKE_ODPS" "$repo/shim/odps.py"
     for suite in fake_suite second_suite; do
-        mkdir -p "$repo/$suite"
+        mkdir -p "$repo/$suite" "$repo/$suite/target"
         printf 'name: %s\nversion: "1.0.0"\n' "$suite" > "$repo/$suite/dbt_project.yml"
+        # Every suite dir starts with a previous invocation's results file in place, the way a
+        # real working tree does. A gate that reads target/run_results.json without first
+        # clearing it will credit this decoy, and the no_results_file case goes green on
+        # evidence from a run that never happened.
+        printf '%s\n' "$(fixture_clean_pass)" > "$repo/$suite/target/run_results.json"
     done
     cat > "$repo/bin/dbt" <<'FAKE_DBT'
 #!/usr/bin/env python3

@@ -49,7 +49,10 @@ Options and extras:
 All five conditions, per suite:
 
 1. `dbt build` exited 0;
-2. `target/run_results.json` exists;
+2. `target/run_results.json` exists **and belongs to this invocation** - the entrypoint
+   removes a previous run's file before building, because dbt writes it only at the end of a
+   run, so an interrupted or timed-out build otherwise leaves the last completed run's file
+   sitting in `target/` for the gate to read;
 3. it lists at least one node that actually executed (`success` / `pass` / `warn`);
 4. no node errored, failed, or reported a status this file does not know;
 5. if any node that executed is supposed to leave a relation behind (a model, seed or
@@ -66,6 +69,7 @@ So these are **failures**, each of them used to be a pass:
 | a requested suite directory has no `dbt_project.yml` | `SUITE <name>: NOT-PRESENT ... counted as a failure` | renaming or deleting a suite must cost coverage loudly, not quietly |
 | no suite ran at all | `INTEGRATION: FAIL - no suite ran` | the loop finishing is not the same as the loop having work |
 | `MC_SCHEMA_MC_RUN_ID` is not one plain identifier, or is longer than 64 characters | `INTEGRATION: BLOCKED` | a name with a separator is the same name on a server that folds identifiers, so two suites would share a schema |
+| `dbt` was interrupted or timed out and wrote no results, so the only file in `target/` is a previous invocation's | `SUITE <name>: NOT-RUN (dbt wrote no run_results.json)`, preceded by `SUITE <name>: stale run_results.json from a previous invocation removed before building` | a stale file describes somebody else's run. Crediting it prints `GATE=PASS` for work that never happened - measured on a build killed by the timeout, whose results file still carried an invocation 11 days older |
 | model/seed/snapshot nodes report executed while the run's own schema holds 0 relations | `RUN-SCHEMA: EMPTY ... (not a pass)` | results only prove dbt *reported* success. If the relations landed in some other schema - a resolved-schema regression, a `database`/`schema` override in the fixtures - the isolation above is defeated and cleanup still says OK, because dropping an empty schema is trivially green |
 | the run's own schema is gone or cannot be read at that moment | `RUN-SCHEMA: MISSING` + `RUN-SCHEMA: UNREADABLE (rc=...)` | a failed read must not be reported as the very finding this check looks for, nor defaulted to "empty": it is its own failure |
 
@@ -87,7 +91,9 @@ avoid, the rules above are themselves tested: `./scripts/test-mc-integration-gat
 one case per shape against the real scripts, on a machine with no credentials, no warehouse
 and no pyodps, and it also reads the workflow file to check that the schemas a matrix would
 compose are pairwise distinct. It runs in CI as `gate-selftest`, on every pull request.
-The warehouse is doubled (`tests/gate/fake_odps.py`) and the fake `dbt` writes relations into
+The warehouse is doubled (`tests/gate/fake_odps.py`), every suite directory in the harness
+starts with a previous invocation's `run_results.json` in place (a decoy - a gate that reads the
+file without clearing it will credit it), and the fake `dbt` writes relations into
 the schema it is handed, so a case can distinguish "the results file claims models ran" from
 "the schema actually has relations" - the pair `executed_no_relations` (must go red) and
 `tests_only` (must stay green with an empty schema) is what keeps that rule from being a

@@ -27,8 +27,9 @@
 # (ODPS_ACCESS_ID / ODPS_ACCESS_KEY, or ALIBABA_CLOUD_ACCESS_KEY_ID / _SECRET);
 # the generated profile holds no secret material and lives in a temp dir.
 #
-# A suite counts as passed only if run_results.json exists, contains at least one
-# executed node, has no errored/failed/unknown-status node, and dbt itself exited 0.
+# A suite counts as passed only if run_results.json was written by THIS invocation (a
+# previous run's file is removed before building), contains at least one executed node, has no
+# errored/failed/unknown-status node, and dbt itself exited 0.
 # An empty result list, an all-skipped suite and a non-zero dbt exit are failures;
 # they used to be reported as passes, which is the whole reason this entrypoint
 # exists.
@@ -159,6 +160,18 @@ for suite in "${SUITES[@]}"; do
     echo ""
     echo "=== SUITE $suite ==="
     SUITES_WITH_PROJECT=$((SUITES_WITH_PROJECT + 1))
+    # Only this invocation's results are evidence. dbt writes target/run_results.json at the
+    # END of a run, so a build that is interrupted, times out or dies leaves the previous run's
+    # file sitting there - and this entrypoint would then read it and print GATE=PASS for work
+    # it never did. Measured: a build killed by the timeout here printed `GATE=PASS 62 node(s)
+    # executed` off a file whose own metadata said the invocation started 11 days earlier.
+    # Removing that one generated file (nothing else in target/) is what makes "no results were
+    # written" reportable as NOT-RUN instead of as somebody else's green run.
+    if [ -f "$project_dir/target/run_results.json" ]; then
+        rm -f "$project_dir/target/run_results.json" \
+            && echo "SUITE $suite: stale run_results.json from a previous invocation removed before building" \
+            || echo "SUITE $suite: COULD-NOT-REMOVE stale run_results.json - results below may not belong to this run"
+    fi
     # `dbt deps` clones git packages over TLS and that transport flakes - or is
     # blocked outright - on shared runners and dev boxes, so it is retried before
     # the suite is called a failure. A suite that never got its packages reports
