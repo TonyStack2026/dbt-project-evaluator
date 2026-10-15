@@ -232,7 +232,7 @@ jobs:
                   echo "" >> "$GITHUB_STEP_SUMMARY"
                   echo "## ${{ matrix.suite }}" >> "$GITHUB_STEP_SUMMARY"
                   echo '```' >> "$GITHUB_STEP_SUMMARY"
-                  grep -E "^(PREFLIGHT|SUITE|CLEANUP|INTEGRATION|  status|  NOT-PASS)" "$RUNNER_TEMP/${{ matrix.suite }}.log" \
+                  grep -E "^(PREFLIGHT|SUITE|RUN-SCHEMA|CLEANUP|INTEGRATION|  status|  NOT-PASS)" "$RUNNER_TEMP/${{ matrix.suite }}.log" \
                       >> "$GITHUB_STEP_SUMMARY" || true
                   echo '```' >> "$GITHUB_STEP_SUMMARY"
 

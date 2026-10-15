@@ -59,3 +59,16 @@ fixture_unknown_status() {
 ]}
 JSON
 }
+
+# A suite made only of tests/sources: nodes execute and pass, and nothing in it is
+# supposed to create a table or view. This is the counterweight for the run-schema
+# check - without it the guard would false-alarm on e.g. integration_tests_empty.
+fixture_tests_only() {
+    cat <<'JSON'
+{"results": [
+  {"unique_id": "test.dpe.a", "status": "pass", "message": "PASS=1"},
+  {"unique_id": "test.dpe.b", "status": "warn", "message": "WARN"},
+  {"unique_id": "source.dpe.c", "status": "success", "message": null}
+]}
+JSON
+}

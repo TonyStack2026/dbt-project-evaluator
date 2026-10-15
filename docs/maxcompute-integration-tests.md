@@ -46,12 +46,15 @@ Options and extras:
 
 ## What makes a suite count as passed
 
-All four conditions, per suite:
+All five conditions, per suite:
 
 1. `dbt build` exited 0;
 2. `target/run_results.json` exists;
 3. it lists at least one node that actually executed (`success` / `pass` / `warn`);
-4. no node errored, failed, or reported a status this file does not know.
+4. no node errored, failed, or reported a status this file does not know;
+5. if any node that executed is supposed to leave a relation behind (a model, seed or
+   snapshot), the schema this run owns actually holds at least one relation. That is read
+   from the project, before cleanup, rather than inferred from what dbt said it did.
 
 So these are **failures**, each of them used to be a pass:
 
@@ -63,22 +66,39 @@ So these are **failures**, each of them used to be a pass:
 | a requested suite directory has no `dbt_project.yml` | `SUITE <name>: NOT-PRESENT ... counted as a failure` | renaming or deleting a suite must cost coverage loudly, not quietly |
 | no suite ran at all | `INTEGRATION: FAIL - no suite ran` | the loop finishing is not the same as the loop having work |
 | `MC_SCHEMA_MC_RUN_ID` is not one plain identifier, or is longer than 64 characters | `INTEGRATION: BLOCKED` | a name with a separator is the same name on a server that folds identifiers, so two suites would share a schema |
+| model/seed/snapshot nodes report executed while the run's own schema holds 0 relations | `RUN-SCHEMA: EMPTY ... (not a pass)` | results only prove dbt *reported* success. If the relations landed in some other schema - a resolved-schema regression, a `database`/`schema` override in the fixtures - the isolation above is defeated and cleanup still says OK, because dropping an empty schema is trivially green |
+| the run's own schema is gone or cannot be read at that moment | `RUN-SCHEMA: MISSING` + `RUN-SCHEMA: UNREADABLE (rc=...)` | a failed read must not be reported as the very finding this check looks for, nor defaulted to "empty": it is its own failure |
 
 The line each suite prints carries the counts, so a green run is auditable rather than
-trusted: `SUITE <name>: TOTAL=n EXECUTED=k SKIPPED=s ... GATE=PASS k node(s) executed`.
+trusted: `SUITE <name>: MATERIALIZING=m ...` (relation-bearing nodes that executed) followed by
+`SUITE <name>: TOTAL=n EXECUTED=k SKIPPED=s ... GATE=PASS k node(s) executed`, and the run ends
+with `RUN-SCHEMA: schema=<name> relations=r`.
+
+Two boundaries of rule 5, stated because they are easy to over-read:
+
+- it is per invocation, and one invocation shares a single schema across the suites it runs.
+  The CI matrix gives one suite per job, so in CI it is exactly per suite;
+- it proves *something* landed in the schema the run owns, not that every relation did. A
+  partial mis-landing still needs the per-model catalog, which is what `docs generate`
+  evidence covers, not this gate.
 
 Because "a gate that cannot go red" is the failure mode this whole entrypoint exists to
 avoid, the rules above are themselves tested: `./scripts/test-mc-integration-gate.sh` runs
 one case per shape against the real scripts, on a machine with no credentials, no warehouse
 and no pyodps, and it also reads the workflow file to check that the schemas a matrix would
 compose are pairwise distinct. It runs in CI as `gate-selftest`, on every pull request.
+The warehouse is doubled (`tests/gate/fake_odps.py`) and the fake `dbt` writes relations into
+the schema it is handed, so a case can distinguish "the results file claims models ran" from
+"the schema actually has relations" - the pair `executed_no_relations` (must go red) and
+`tests_only` (must stay green with an empty schema) is what keeps that rule from being a
+guess or from false-alarming on a suite that has nothing to materialise.
 
 Exit codes:
 
 | Code | Meaning |
 | --- | --- |
 | 0 | every suite ran against the project and passed |
-| 1 | a suite failed, produced no executed result, was requested but absent, or `dbt` exited non-zero |
+| 1 | a suite failed, produced no executed result, was requested but absent, `dbt` exited non-zero, or the run schema was empty / unreadable while relation-bearing nodes reported executed |
 | 2 | **blocked**: no credentials, no `MC_PROJECT`/`MC_ENDPOINT`, the project is unreachable, it is a two-tier project, or the run schema is not one safe identifier. No SQL ran, so this is not a pass. |
 
 A blocked run is reported as `INTEGRATION: BLOCKED - <reason>`; a suite whose packages could

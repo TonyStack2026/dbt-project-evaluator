@@ -2,10 +2,13 @@
 # **what?**
 # Prove the MaxCompute integration gate fails when there is nothing to believe:
 # an empty result list, an all-skipped suite, a non-zero dbt exit, a missing
-# run_results.json, a requested suite that is not there, a failed `dbt deps`, and a run
-# schema that is not one safe identifier. Also prove the two shapes that must stay
-# usable: a clean suite is green, and two matrix jobs running in parallel own different
-# schemas. Reads the workflow file to check the schema names a real matrix would compose.
+# run_results.json, a requested suite that is not there, a failed `dbt deps`, a run
+# schema that is not one safe identifier, relation-bearing nodes that report executed
+# while the schema the run owns stays empty, and a run schema that cannot be read at
+# all. Also prove the three shapes that must stay usable: a clean suite is green, a
+# tests-only suite is green with an empty schema (nothing was expected to materialise),
+# and two matrix jobs running in parallel own different schemas. Reads the workflow file
+# to check the schema names a real matrix would compose.
 #
 # **why?**
 # The point of the entrypoint is to tell "the rules produced the expected rows" apart
@@ -81,8 +84,12 @@ summary_case empty_results  1 "no node produced a result"    "$(fixture_empty)"
 summary_case all_skipped    1 "every node was skipped/no-op" "$(fixture_all_skipped)"
 summary_case one_fail       1 "NOT-PASS"                     "$(fixture_one_fail)"
 summary_case unknown_status 1 "NOT-PASS"                     "$(fixture_unknown_status)"
-summary_case clean_pass     0 "GATE=PASS"                    "$(fixture_clean_pass)"
+summary_case clean_pass     0 "MATERIALIZING=1"              "$(fixture_clean_pass)"
 summary_case real_live_shape 0 "GATE=PASS"                   "$(fixture_real_live_shape)"
+# The other side of the same new branch: a suite whose nodes all ran but none of them is
+# a model/seed/snapshot, so it must be counted as 0 - otherwise the run-schema check
+# would demand relations from a tests-only suite and false-alarm.
+summary_case tests_only     0 "MATERIALIZING=0"              "$(fixture_tests_only)"
 
 # ----------------------------------------------------- the entrypoint as a whole
 # A repo-shaped temp directory, so the entrypoint resolves its suites exactly as in CI.
@@ -115,6 +122,27 @@ if sub == "deps":
 if sub == "build":
     target = sys.argv[sys.argv.index("--target") + 1] if "--target" in sys.argv else "?"
     print("fake dbt build: mode=%s target=%s" % (mode, target))
+
+    # What real dbt does with the profile it is handed: create relations in *that* schema.
+    # Reading the schema out of the generated profiles.yml is the only way this harness can
+    # tell "the run landed in the schema it owns" apart from "the results file says so",
+    # which is precisely the difference the entrypoint now checks.
+    schema = ""
+    profile_path = os.path.join(os.environ.get("DBT_PROFILES_DIR", ""), "profiles.yml")
+    if os.path.exists(profile_path):
+        with open(profile_path) as handle:
+            for line in handle:
+                if line.strip().startswith("schema:"):
+                    schema = line.split(":", 1)[1].strip()
+    if schema and os.environ.get("FAKE_ODPS_STATE"):
+        import odps
+        client = odps.ODPS(access_id="stub-id", secret_access_key="stub-key")
+        if mode == "executed_no_relations":
+            pass  # the false-green shape: results claim models ran, schema stays empty
+        elif mode == "schema_vanished":
+            client.delete_schema(schema)  # nothing to read back later -> unreadable path
+        else:
+            odps.seed_relation(os.environ["FAKE_ODPS_STATE"], schema, "gate_model")
     if mode != "no_results_file":
         os.makedirs("target", exist_ok=True)
         source = os.path.join(os.environ["GATE_RESULTS_DIR"], mode + ".json")
@@ -129,11 +157,12 @@ sys.exit(0)
 FAKE_DBT
     chmod +x "$repo/bin/dbt"
     local pair
-    for pair in empty_results all_skipped one_fail clean_pass real_live_shape build_failed no_results_file deps_fails; do
+    for pair in empty_results all_skipped one_fail clean_pass real_live_shape build_failed no_results_file deps_fails executed_no_relations schema_vanished tests_only; do
         case "$pair" in
             empty_results) printf '%s\n' "$(fixture_empty)"        > "$repo/results/$pair.json" ;;
             all_skipped)   printf '%s\n' "$(fixture_all_skipped)"  > "$repo/results/$pair.json" ;;
             one_fail)      printf '%s\n' "$(fixture_one_fail)"     > "$repo/results/$pair.json" ;;
+            tests_only)    printf '%s\n' "$(fixture_tests_only)"   > "$repo/results/$pair.json" ;;
             *)             printf '%s\n' "$(fixture_clean_pass)"   > "$repo/results/$pair.json" ;;
         esac
     done
@@ -187,6 +216,13 @@ gate_case no_results_file no_results_file 1 "NOT-RUN (dbt wrote no run_results.j
 gate_case deps_fails      deps_fails      1 "NOT-RUN (packages could not be installed)" fake_suite
 gate_case missing_suite   clean_pass      1 "NOT-PRESENT"                         nope_suite
 gate_case unsafe_schema   clean_pass      2 "not a plain identifier"              fake_suite MC_RUN_ID="1234-5678"
+# The schema this run owns must contain something once relation-bearing nodes report
+# executed. Results alone cannot show it: dropping an empty schema is trivially green.
+gate_case empty_run_schema executed_no_relations 1 "RUN-SCHEMA: EMPTY"             fake_suite
+# ...and the check must not fire when nothing was expected to materialise.
+gate_case tests_only_green tests_only      0 "RUN-SCHEMA: SKIPPED"                 fake_suite
+# A schema that cannot be read is its own failure, not a silent "empty".
+gate_case schema_vanished  schema_vanished 1 "RUN-SCHEMA: UNREADABLE"              fake_suite
 
 # ------------------------------------------------- schemas a run creates and drops
 # The ownership rule is what keeps a suite from deleting somebody else's warehouse, so

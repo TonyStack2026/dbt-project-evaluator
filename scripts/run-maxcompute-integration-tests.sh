@@ -33,8 +33,14 @@
 # they used to be reported as passes, which is the whole reason this entrypoint
 # exists.
 #
+# On top of that, a run whose executed nodes include model/seed/snapshot ones has to
+# leave at least one relation in the schema it owns. Results alone cannot show that:
+# dropping an empty schema is trivially successful, so a schema-resolution regression
+# would have printed GATE=PASS while the work landed somewhere else.
+#
 # Exit codes: 0 every suite passed | 1 a node failed or errored, a suite produced no
-# executed result, or dbt exited non-zero | 2 blocked, no SQL reached a project
+# executed result, dbt exited non-zero, or the run schema held nothing although relation-
+# bearing nodes reported executed | 2 blocked, no SQL reached a project
 # (missing env/credentials, unreachable or two-tier project, or a run schema that is
 # not a single safe identifier).
 set -uo pipefail
@@ -132,6 +138,10 @@ fi
 
 OVERALL=0
 SUITES_WITH_PROJECT=0
+# How many executed nodes are supposed to leave a relation behind (model/seed/snapshot).
+# Cross-checked against the contents of the run schema below: results that say "40 models
+# built" while the schema this run owns is empty did not land where the gate claims.
+MATERIALIZING_TOTAL=0
 CREATED_SCHEMAS=()
 if [ "$SCHEMA_OWNED_BY_RUN" = "true" ]; then
     CREATED_SCHEMAS=("$RUN_SCHEMA")
@@ -191,8 +201,15 @@ for suite in "${SUITES[@]}"; do
            "$DPE_ARTIFACT_DIR/$suite-run_results.json" 2>/dev/null \
             && echo "SUITE $suite snapshot: $suite-run_results.json"
     fi
-    "$PYTHON_BIN" "$SUPPORT" summary "$project_dir/target/run_results.json" "$suite"
-    [ $? -eq 0 ] || OVERALL=1
+    SUM_OUT="$("$PYTHON_BIN" "$SUPPORT" summary "$project_dir/target/run_results.json" "$suite")"
+    SUM_RC=$?
+    printf '%s\n' "$SUM_OUT"
+    [ $SUM_RC -eq 0 ] || OVERALL=1
+    # Parse the count out of the line the summary printed rather than re-deriving it here,
+    # so there is exactly one place that decides what "materialising" means.
+    MAT="$(printf '%s\n' "$SUM_OUT" \
+        | sed -nE 's/^SUITE [^ ]+: MATERIALIZING=([0-9]+).*/\1/p' | head -1)"
+    MATERIALIZING_TOTAL=$((MATERIALIZING_TOTAL + ${MAT:-0}))
 done
 
 echo ""
@@ -201,6 +218,30 @@ if [ "${SUITES_WITH_PROJECT:-0}" -eq 0 ]; then
     # pass for a run that evaluated no rule at all.
     echo "INTEGRATION: FAIL - no suite ran (0 of ${#SUITES[@]} requested had a dbt_project.yml)"
     OVERALL=1
+fi
+
+# Where the work actually landed, read while the schemas are still alive.
+# An all-empty run schema after executed relation-bearing nodes used to be invisible:
+# the suites still reported GATE=PASS and cleanup still said OK (dropping an empty schema
+# is trivially successful), so a resolved-schema regression - dbt writing to some other
+# schema while this run "owned" an untouched one - would look exactly like a green run.
+if [ "$MATERIALIZING_TOTAL" -gt 0 ]; then
+    RS_OUT="$("$PYTHON_BIN" "$SUPPORT" count "$RUN_SCHEMA")"
+    RS_RC=$?
+    printf '%s\n' "$RS_OUT"
+    RS_REL="$(printf '%s\n' "$RS_OUT" \
+        | sed -nE 's/^RUN-SCHEMA: schema=[^ ]+ relations=([0-9]+)$/\1/p' | head -1)"
+    if [ $RS_RC -ne 0 ]; then
+        # Unreadable or missing is its own failure: defaulting it to "empty" would let a
+        # broken read masquerade as the very finding this check exists to report.
+        echo "RUN-SCHEMA: UNREADABLE (rc=$RS_RC) - $MATERIALIZING_TOTAL relation-bearing node(s) ran and the schema could not be read; counted as a failure"
+        OVERALL=1
+    elif [ "${RS_REL:-0}" -eq 0 ]; then
+        echo "RUN-SCHEMA: EMPTY - $MATERIALIZING_TOTAL relation-bearing node(s) reported executed, yet schema $RUN_SCHEMA holds 0 relations: the run did not land in the schema it owns (not a pass)"
+        OVERALL=1
+    fi
+else
+    echo "RUN-SCHEMA: SKIPPED (no model/seed/snapshot node executed, so nothing was expected to materialise in $RUN_SCHEMA)"
 fi
 
 if [ "${MC_KEEP_SCHEMAS:-0}" = "1" ]; then

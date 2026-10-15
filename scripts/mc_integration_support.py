@@ -5,6 +5,8 @@ Subcommands
   preflight  -- is the configured project reachable and usable by dbt (three-tier)?
                 then make sure this run's schema exists.
   summary    -- turn a dbt run_results.json into one machine-readable line.
+  count      -- read-only: how many relations a schema holds right now (used by the
+               entrypoint to prove the run actually landed in the schema it owns).
   cleanup    -- drop the schemas this run created, and prove they are gone.
 
 Credentials are read from the environment by the caller (the adapter's
@@ -129,6 +131,17 @@ def summary(path, label):
     skipped = sum(counts.get(status, 0) for status in DID_NOT_EXECUTE)
     total = sum(counts.values())
 
+    # Nodes that are supposed to leave a relation behind in the schema this run owns.
+    # Tests, sources, exposures and macros evaluate or register something; they do not
+    # create a table or view, so a suite made only of them legitimately leaves the schema
+    # empty. This number is what the entrypoint cross-checks against the schema contents.
+    RELATION_PREFIXES = ("model.", "seed.", "snapshot.")
+    materialising = sum(1 for result in results
+                        if normalise(result.get("status")) in EXECUTED_OK
+                        and str(result.get("unique_id", "")).startswith(RELATION_PREFIXES))
+    print("SUITE %s: MATERIALIZING=%d (model/seed/snapshot nodes that executed)"
+          % (label, materialising))
+
     line = "SUITE %s: TOTAL=%d EXECUTED=%d SKIPPED=%d" % (label, total, executed, skipped)
     for status, count in sorted(counts.items()):
         line += " %s=%d" % (status.replace(" ", "_").upper(), count)
@@ -167,6 +180,31 @@ def _drop_relations(odps_client, schema):
             print("CLEANUP: FAIL cannot drop %s.%s: %s: %s"
                   % (schema, relation.name, type(exc).__name__, exc))
     return dropped
+
+
+def count_relations(schema):
+    """Report how many relations ``schema`` actually holds right now.
+
+    Read-only by design: it runs while the schemas are still alive, before cleanup.
+    A suite whose nodes all report success while this run's schema stayed empty did not
+    land where the gate says it landed (a resolved-schema regression, a project/schema
+    override in the fixtures, or an adapter writing somewhere else), and that is exactly
+    the shape the ownership rules exist to make visible - so an unreadable or missing
+    schema is reported as its own failure line rather than defaulted to zero.
+    """
+    try:
+        odps_client = _client()
+        if not odps_client.exist_schema(schema):
+            print("RUN-SCHEMA: MISSING schema=%s (this run never had a schema to land in)"
+                  % schema)
+            return 1
+        relations = len(list(odps_client.list_tables(schema=schema)))
+        print("RUN-SCHEMA: schema=%s relations=%d" % (schema, relations))
+        return 0
+    except Exception as exc:
+        print("RUN-SCHEMA: UNREADABLE schema=%s %s: %s"
+              % (schema, type(exc).__name__, exc))
+        return 1
 
 
 def cleanup(schemas):
@@ -208,6 +246,8 @@ def main(argv):
         return preflight(argv[1])
     if command == "summary":
         return summary(argv[1], argv[2])
+    if command == "count":
+        return count_relations(argv[1])
     if command == "cleanup":
         return cleanup(argv[1:])
     print("unknown command: %s" % command)
