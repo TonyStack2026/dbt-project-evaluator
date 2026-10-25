@@ -11,6 +11,7 @@ reached a warehouse.
 | --- | --- | --- |
 | `integration_tests_minimal` | a fixed minimal DAG: a healthy base → staging → intermediate → marts chain over a real seed, plus one model per deliberate violation (root model, unused source, direct join to a source, missing prefix, missing description, hard coded reference) | the rules fire on the resources they are supposed to fire on, the healthy chain is *not* reported, and the exemptions seed stops a reported row from coming back |
 | `integration_tests_empty` | a project with no models, seeds, sources or exposures | an empty project builds and every pinned rule returns zero findings instead of inventing rows or failing on a missing denominator |
+| ↳ 上一行的边界（10-25 实测补充） | 「empty」指**没有 findings**，不是没有关系 | `dbt build` 在这里仍会落 49 个关系（`MATERIALIZING=49`，own schema `relations=49`，2026-10-25 真机），因为它照样构建包自身的模型；别把这一套当成 `RUN-SCHEMA: SKIPPED` 的例子 |
 | `integration_tests` | the upstream fixture project (its own seeds hold the expected output of each rule model) | rule-by-rule equality against expected rows on MaxCompute |
 
 Expectations are expressed as SQL tests that run against the package's own `fct_*` /

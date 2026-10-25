@@ -62,7 +62,11 @@ JSON
 
 # A suite made only of tests/sources: nodes execute and pass, and nothing in it is
 # supposed to create a table or view. This is the counterweight for the run-schema
-# check - without it the guard would false-alarm on e.g. integration_tests_empty.
+# check - without it the guard would demand relations from a suite that has none to create.
+# Naming note, measured on a live project 2026-10-25: `integration_tests_empty` is NOT such a
+# suite - it reports MATERIALIZING=49 and its own schema held 49 relations (dbt build still
+# materialises the package's own models there; "empty" means no findings, not no relations).
+# So this case protects the branch in general; no shipped suite currently reaches SKIPPED.
 fixture_tests_only() {
     cat <<'JSON'
 {"results": [
