@@ -19,6 +19,10 @@ on:
     push:
         branches:
             - main
+            # 探针分支（不是交付物的一部分，只为让这个 workflow 在我自己的仓里真的跑一次）：
+            # 分支 push 不会命中 branches:[main] 过滤器，也不会在 PR 面产生任何 run，
+            # 因为那条 run 要等 base 仓启用 Actions。加这一行只是为了拿到 GitHub runner 上的读数。
+            - probe/gate-selftest-on-gh-runner
     pull_request:
     workflow_dispatch:
         inputs:
