@@ -13,7 +13,12 @@
 #   ./scripts/ci-select-suites.sh integration_tests_minimal
 #
 # Output (one line, written to GITHUB_OUTPUT when present):
-#   matrix=[{"suite":"integration_tests"},{"suite":"integration_tests_empty"}, ...]
+#   matrix={"include":[{"suite":"integration_tests"},{"suite":"integration_tests_empty"}, ...]}
+# The payload is an OBJECT, not a bare array, because the consumer is
+# `strategy.matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}` and Actions requires that
+# value to be an object - a top-level array makes the whole workflow file invalid, which would
+# stop every matrix job from expanding the moment the credential gate lets the live job run.
+# `tests/gate/matrix_contract.py` checks producer and consumer together, not each side alone.
 # Exit codes: 0 selection produced | 1 an unknown / non-suite name was requested | 2 usage error
 set -uo pipefail
 
@@ -85,7 +90,10 @@ else
     fi
 fi
 
-matrix="["
+# Wrapped in `include` so the emitted value is an object (see the header): a bare array here is
+# what the reviewer caught on 2026-11-05, and it had never surfaced because Actions is not enabled
+# on the base repository, so nothing in this workflow has ever been expanded by a runner.
+matrix='{"include":['
 first=1
 while IFS= read -r suite; do
     [ -n "$suite" ] || continue
@@ -93,7 +101,7 @@ while IFS= read -r suite; do
     first=0
     matrix="$matrix{\"suite\":\"$suite\"}"
 done <<< "$selected"
-matrix="$matrix]"
+matrix="$matrix]}"
 
 echo "matrix=$matrix"
 echo "SELECT: ok source=$source suites=$(printf '%s ' $selected)" >&2

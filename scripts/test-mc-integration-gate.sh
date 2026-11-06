@@ -35,9 +35,10 @@ GATE_SCRIPT="$UNDER/run-maxcompute-integration-tests.sh"
 FIXTURES="$REPO_ROOT/tests/gate/fixtures.sh"
 FAKE_ODPS="$REPO_ROOT/tests/gate/fake_odps.py"
 SCHEMA_TEST="$REPO_ROOT/tests/gate/schema_uniqueness.py"
+MATRIX_CONTRACT="$REPO_ROOT/tests/gate/matrix_contract.py"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 
-for required in "$REAL_SUPPORT" "$GATE_SCRIPT" "$FIXTURES" "$FAKE_ODPS" "$SCHEMA_TEST" "$WORKFLOW"; do
+for required in "$REAL_SUPPORT" "$GATE_SCRIPT" "$FIXTURES" "$FAKE_ODPS" "$SCHEMA_TEST" "$MATRIX_CONTRACT" "$WORKFLOW"; do
     [ -f "$required" ] || { echo "SETUP: FAIL missing $required"; exit 2; } done
 
 WORK="$(mktemp -d)"
@@ -237,7 +238,6 @@ echo "-- schema ownership"
 iso_repo="$WORK/repo-schema-ownership"; iso_log="$WORK/schema-ownership.log"
 build_repo "$iso_repo"
 gate_run "$iso_repo" "$iso_log" clean_pass fake_suite; iso_rc=$?
-CHECKS=$((CHECKS + 1))
 if [ $iso_rc -ne 0 ]; then
     bad "gate/schema-ownership run exited $iso_rc, expected 0"; show "schema-ownership" "$(cat "$iso_log")"
 else
@@ -266,7 +266,6 @@ import fake_odps
 fake_odps.seed_relation(sys.argv[1], "dpe_ci_clean_pass", "somebody_elses_table")
 PY
 gate_run "$pre_repo" "$pre_log" clean_pass fake_suite
-CHECKS=$((CHECKS + 1))
 if grep -qE "CLEANUP: (OK dropped|FAIL)" "$pre_log" && grep -q "dropped schema dpe_ci_clean_pass" "$pre_log"; then
     bad "the run dropped a schema it did not create"; show "preexisting" "$(cat "$pre_log")"
 elif ! grep -qF "CLEANUP: OK nothing to drop" "$pre_log"; then
@@ -280,8 +279,23 @@ echo ""
 echo "-- schema isolation across the matrix"
 "$PYTHON_BIN" "$SCHEMA_TEST" "$WORKFLOW"
 schema_rc=$?
-CHECKS=$((CHECKS + 1))
 if [ $schema_rc -eq 0 ]; then ok "schema_uniqueness: every matrix job composes its own schema"; else bad "schema_uniqueness exited $schema_rc"; fi
+
+# ------------------------------------------------ the matrix producer/consumer contract
+# 2026-11-05 review: the selector emitted a bare JSON array while `strategy.matrix` needs an
+# object, so the whole workflow would have been rejected the moment the credential gate let the
+# live job run. Selector-only tests could not see that - only pairing the two ends can.
+"$PYTHON_BIN" "$MATRIX_CONTRACT"
+mc_rc=$?
+if [ $mc_rc -eq 0 ]; then ok "matrix contract: selector payload is the shape strategy.matrix accepts (default + explicit)"; else bad "matrix contract exited $mc_rc (2 = 什么都没判，别当通过)"; fi
+"$PYTHON_BIN" "$MATRIX_CONTRACT" --selftest
+mcs_rc=$?
+if [ $mcs_rc -eq 0 ]; then ok "matrix contract self-test: 四条配对 + 真 producer + 剥壳还原旧形状全部命中预期"; else bad "matrix contract self-test exited $mcs_rc"; fi
+
+# 计数口径自证：ok()/bad() 是唯一自增点。曾有 5 处手工 CHECKS+=1 叠在 ok/bad 之外，
+# 于是公布出去的 checks 比真实断言条数多 5（10-25 起我引用的 25/29 都含这层虚高）。
+stray=$(grep -n 'CHECKS=\$((CHECKS + 1))' "$0" | grep -vE '^[0-9]+:(ok|bad)\(\)' | wc -l)
+if [ "$stray" -eq 0 ]; then ok "counter hygiene: ok()/bad() 是唯一计数点（手工自增残留 0 处）"; else bad "counter hygiene: 发现 $stray 处手工 CHECKS 自增，公布数会虚高"; fi
 
 echo ""
 echo "INTEGRATION GATE SELF-TEST: checks=$CHECKS failures=$FAILURES"

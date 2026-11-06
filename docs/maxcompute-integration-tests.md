@@ -177,6 +177,26 @@ The default list is deliberately an explicit one rather than "every `integration
 directory", so adding a project cannot silently put an unmeasured suite into CI. The selection is
 a script instead of inline workflow YAML so those rules are testable without GitHub.
 
+The emitted line is an **object**, not a bare array:
+
+```
+matrix={"include":[{"suite":"integration_tests"},{"suite":"integration_tests_2"}, ...]}
+```
+
+because the consumer is `strategy.matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}` and Actions
+requires that value to be an object - a top-level array makes the whole workflow file invalid, so every
+matrix job would fail to expand the moment the credential gate allowed the live one. That shape is
+checked *as a pair* by `tests/gate/matrix_contract.py`: it runs the real selector for both the default
+and an explicitly requested selection, reads the consumer out of the workflow file, and fails if the
+emitted shape is not the accepted one. Its `--selftest` asserts the four pairings (array-vs-object
+consumer and object-vs-`include` consumer are the two that must fail) and reconstructs the old bare
+array from today's payload to prove the check really goes red on it. Checking the selector output
+alone could never have found this - see the review of `5cc119d` (2026-11-05).
+
+The self-test's own counter is guarded too: `ok()`/`bad()` are the only places that increment, and one
+assertion greps the script for stray manual `CHECKS+=1` lines (there were three, which is why an earlier
+revision of this page quoted a `checks=` number 3 higher than the number of assertions it actually made).
+
 ## Version combination
 
 The suites were written against `dbt-core 1.11.2` with `dbt-maxcompute` and a three-tier
