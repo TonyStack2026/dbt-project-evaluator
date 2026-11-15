@@ -6,6 +6,9 @@ exposures:
     type: dashboard
     url: dave.com/metrics
     maturity: low
+    meta:
+      note: "it's a caf\u00e9"
+      path: "C:\\temp"
     tags: ['proserv']
     owner:
       name: dave's davey

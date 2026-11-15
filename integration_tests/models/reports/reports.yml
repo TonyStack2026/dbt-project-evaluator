@@ -8,7 +8,7 @@ models:
       materialized: table
     columns:
       - name: col 
-        description: col me maybe
+        description: col me maybe \backslash 'quote' 中文
         data_type: boolean
 
   - name: report_2
