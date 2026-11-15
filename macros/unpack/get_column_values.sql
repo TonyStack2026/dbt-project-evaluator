@@ -21,13 +21,13 @@
                 {%- set values_line  = 
                     [
                         wrap_string_with_quotes(node.unique_id),
-                        wrap_string_with_quotes(dbt.escape_single_quotes(column.name)),
-                        wrap_string_with_quotes(dbt.escape_single_quotes(column.description)),
-                        wrap_string_with_quotes(dbt.escape_single_quotes(column.data_type)),
-                        wrap_string_with_quotes(dbt.escape_single_quotes(tojson(column.constraints))),
+                        wrap_string_with_quotes(column.name),
+                        wrap_string_with_quotes(column.description),
+                        wrap_string_with_quotes(column.data_type),
+                        wrap_string_with_quotes(tojson(column.constraints)),
                         column.constraints | selectattr('type', 'equalto', 'not_null') | list | length > 0,
                         column.constraints | length,
-                        wrap_string_with_quotes(dbt.escape_single_quotes(column.quote))
+                        wrap_string_with_quotes(column.quote)
                     ]
                 %}
 
