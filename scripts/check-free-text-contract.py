@@ -19,7 +19,10 @@ Scope statement, so nothing here is over-claimed: (1) proves the *predicate* of 
 warehouse; (2) proves the *macro text*, not dbt's dispatch resolution and not any parser. The live
 green/red evidence for the warehouse behaviour is the `integration_tests` run, reported separately.
 
-Exit codes: 0 all checks passed | 1 a check failed | 2 blocked, dependencies missing so nothing ran.
+Exit codes: 0 all checks passed | 1 a check actually failed | 2 blocked - a dependency
+(jinja2, PyYAML or dbt-core's macro sources) is missing, so part of the contract could not
+run at all. Blocked is never reported as a pass, and it exits 2 rather than 1 because it is
+an environment gap, not a broken assertion.
 """
 import hashlib
 import json
@@ -306,10 +309,15 @@ def decode_hive_style(literal, trace=None):
 
 
 def check_macro_contract():
+    """Run the macro half; return None, or the reason the environment blocked it.
+
+    Missing dbt-core macro sources is a *blocked* state, not a failed assertion: the code under
+    test is fine, the runner simply cannot reach the reference macros. Review feedback on bba8422
+    asked for this to match the documented exit classification before the script goes into CI.
+    """
     built, err = build_renderer()
     if err:
-        check("macro contract check is runnable", False, err)
-        return
+        return err
     render_wrap, escape_only = built
 
     def lit(value, adapter):
@@ -401,6 +409,8 @@ def check_macro_contract():
     check("README tells root projects to configure the same dispatch search_order",
           "search_order: ['dbt_project_evaluator', 'dbt']" in readme, "")
 
+    return None
+
 
 def main():
     try:
@@ -413,8 +423,11 @@ def main():
         print("CONTRACT: BLOCKED - %s" % err)
         return 2
     check_truth_table(fixtures)
-    check_macro_contract()
+    blocked = check_macro_contract()
     print("CONTRACT: checks=%d failures=%d" % (checks, len(failures)))
+    if blocked:
+        print("CONTRACT: BLOCKED - %s; the macro half never ran, so this is not a pass (exit 2)" % blocked)
+        return 2
     if failures:
         for name in failures:
             print("  FAILED:", name)
